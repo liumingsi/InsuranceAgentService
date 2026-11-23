@@ -29,7 +29,6 @@ async def init_insurance_advisor() -> CompiledStateGraph:
     agent = create_agent(
         model=model,
         tools=[query_candidate_products, retrieve_insurance_clause],
-        checkpointer=True,
         system_prompt=SYSTEM_PROMPT
     )
 

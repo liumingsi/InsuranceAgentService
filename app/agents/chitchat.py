@@ -76,7 +76,7 @@ class ChitChatWorkflow:
         builder.set_finish_point("chitchat")    # chitchat -> END
 
         # 编译
-        return builder.compile(checkpointer=True)
+        return builder.compile()
 
 def init_chitchat_agent():
     return ChitChatWorkflow().build_chitchat_graph()
