@@ -51,44 +51,53 @@ class ChatService:
         # yield ServerSentEvent(data="END", event="done")
 
         async for event in stream:
-            method = event['method']
-            if method == 'messages':
-                data = event['params']['data'][0]
+            if event.get('method') != 'messages':
+                continue
 
-                # 统一提取文本和图片块（兼容 AIMessage 和 AIMessageChunk）
-                text_parts = []
-                image_urls = []
+            data = event['params']['data'][0]
 
-                # 情况 1：content 是列表（多模态消息）
-                if isinstance(data.content, list):
-                    for block in data.content:
-                        block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+            text_parts = []
+            image_urls = []
 
-                        if block_type == "text":
-                            text_parts.append(block.get("text") if isinstance(block, dict) else block.text)
+            # 先按类型提取，不提前访问 .content
+            if isinstance(data, dict):
+                content = data.get("content")
+                delta = data.get("delta") or {}
+                delta_text = delta.get("text") if isinstance(delta, dict) else None
+            else:
+                content = getattr(data, "content", None)
+                delta_text = None
 
-                        elif block_type == "image":
-                            # OpenAI 兼容格式
-                            image_url = block.get("image_url", {}).get("url") if isinstance(block, dict) else None
-                            if image_url:
-                                image_urls.append(image_url)
+            # 情况 1：content 是列表（多模态）
+            if isinstance(content, list):
+                for block in content:
+                    block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
 
-                # 情况 2：content 是纯字符串（无多模态的简单场景）
-                elif isinstance(data.content, str):
-                    text_parts.append(data.content)
+                    if block_type == "text":
+                        text_parts.append(block.get("text") if isinstance(block, dict) else block.text)
 
-                # 兼容流式 chunk 的 delta 格式
-                elif isinstance(data, dict) and data.get('delta') and data['delta'].get('text'):
-                    text_parts.append(data['delta']['text'])
+                    elif block_type == "image":
+                        image_url = (
+                            block.get("image_url", {}).get("url")
+                            if isinstance(block, dict)
+                            else None
+                        )
+                        if image_url:
+                            image_urls.append(image_url)
 
-                # 组装输出
-                text = "".join(text_parts)
+            # 情况 2：content 是字符串
+            elif isinstance(content, str):
+                text_parts.append(content)
 
-                if text:
-                    yield ServerSentEvent(data=text, event="message")
+            # 情况 3：兼容流式 delta
+            elif delta_text:
+                text_parts.append(delta_text)
 
-                # 图片 URL 单独作为事件发出，避免混在文本流里
-                for url in image_urls:
-                    yield ServerSentEvent(data=url, event="image")
+            text = "".join(text_parts)
+            if text:
+                yield ServerSentEvent(data=text, event="message")
+
+            for url in image_urls:
+                yield ServerSentEvent(data=url, event="image")
 
         yield ServerSentEvent(data="END", event="done")

@@ -3,6 +3,7 @@ from langgraph.constants import START, END
 from langgraph.graph import StateGraph
 from langgraph.types import Command
 
+from .claim import init_claim_advisor
 from .schemas import InsuranceAgentState, Intent
 from .intent_router import router
 from .chitchat import init_chitchat_agent
@@ -62,9 +63,9 @@ def find_previous_ai_message(messages: list[BaseMessage]) -> str:
 # def recommendation_node(state: InsuranceAgentState):
 #     return {"messages": [AIMessage("保险方案推荐功能尚未完成~")]}
 
-# 1.3.理赔咨询节点
-def claim_node(state: InsuranceAgentState):
-    return {"messages": [AIMessage("理赔咨询功能尚未完成~")]}
+# # 1.3.理赔咨询节点
+# def claim_node(state: InsuranceAgentState):
+#     return {"messages": [AIMessage("理赔咨询功能尚未完成~")]}
 
 # 1.4.闲聊节点
 # def chitchat_node(state: InsuranceAgentState):
@@ -105,7 +106,7 @@ async def init_insurance_agent(checkpointer):
     builder.add_node("route", route_node)
     builder.add_node("recommendation_plan",await init_insurance_advisor())
     builder.add_node("chitchat", init_chitchat_agent())
-    builder.add_node("claim", claim_node)
+    builder.add_node("claim", await init_claim_advisor())
     builder.add_node("human_handoff", human_handoff_node)
     builder.add_node("fallback", fallback_node)
 

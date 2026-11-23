@@ -30,4 +30,4 @@ def close_rag():
     rag_pipeline.close()
     vector_store.client.close()
 
-__all__ = ['pipeline', 'retriever', 'close_rag']
+__all__ = ['rag_pipeline', 'retriever', 'close_rag']
