@@ -1,7 +1,9 @@
-from langchain_core.messages import AIMessage, BaseMessage
+import re
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 from langchain.chat_models import init_chat_model
 
 from .claim import init_claim_advisor
@@ -43,7 +45,11 @@ def route_node(state: InsuranceAgentState) -> Command[Intent]:
             "active_workflow": result.intent,
             "previous_workflow": previous_workflow
         },
-        goto=result.intent
+        goto=(
+            "requirement_confirmation"
+            if result.intent in {"recommendation_plan", "claim"}
+            else result.intent
+        )
     )
 
 def find_previous_ai_message(messages: list[BaseMessage]) -> str:
@@ -61,6 +67,142 @@ def find_previous_ai_message(messages: list[BaseMessage]) -> str:
             return message.text
     # 如果是空消息
     return ""
+
+
+def _confirmation_context(messages: list[BaseMessage]) -> str:
+    """Use user statements and the parent-graph summary as confirmed context."""
+
+    context_messages = [
+        message.text
+        for message in messages
+        if isinstance(message, HumanMessage)
+        or (
+            isinstance(message, SystemMessage)
+            and message.text.startswith("此前对话摘要：")
+        )
+    ]
+    return "\n".join(context_messages)
+
+
+def _recommendation_confirmation(context: str, latest_request: str) -> dict | None:
+    request_terms = ("推荐", "适合我", "帮我选", "给我选", "配置保险", "买保险", "做方案", "定制方案")
+    if not any(term in latest_request for term in request_terms):
+        return None
+
+    missing = []
+    age_present = bool(re.search(
+        r"\d{1,2}\s*岁|年龄\s*[:：]?\s*\d{1,2}|(?:19|20)\d{2}\s*年生|儿童|孩子|老人|婴儿|成年",
+        context,
+    ))
+    sex_present = any(term in context for term in ("男性", "女性", "男", "女", "先生", "女士"))
+    if not age_present or not sex_present:
+        missing.append("被保险人的年龄和性别")
+
+    coverage_types = ("医疗", "重疾", "意外", "寿险", "养老", "教育", "车险", "旅行")
+    if not any(term in context for term in coverage_types):
+        missing.append("最关注的保障类型")
+
+    if not re.search(
+        r"预算|保费|年缴|月缴|每年|每月|不限预算|不设预算|\d[\d,]*(?:\.\d+)?\s*(?:元|万|块)",
+        context,
+    ):
+        missing.append("年预算范围")
+
+    if not missing:
+        return None
+
+    question = "为了推荐更合适的保险方案，请补充：" + "、".join(missing) + "。"
+    options = (
+        ["医疗保障", "重疾保障", "意外保障", "寿险", "养老/教育", "还不确定"]
+        if "最关注的保障类型" in missing
+        else []
+    )
+    return {
+        "type": "requirement_confirmation",
+        "title": "确认保险需求",
+        "question": question,
+        "assumptions": [],
+        "options": options,
+    }
+
+
+def _claim_confirmation(context: str, latest_request: str) -> dict | None:
+    if any(term in latest_request for term in ("理赔流程", "理赔材料有哪些", "一般怎么理赔")):
+        return None
+
+    personal_claim_terms = (
+        "能赔",
+        "赔多少",
+        "能不能赔",
+        "能否理赔",
+        "报销多少",
+        "我这次",
+        "我的保单",
+        "我住院",
+        "我出险",
+        "申请理赔",
+        "我要理赔",
+    )
+    if not any(term in latest_request for term in personal_claim_terms):
+        return None
+
+    missing = []
+    policy_terms = ("保单", "保险单", "保险名称", "产品", "险种", "医疗险", "重疾险", "意外险", "寿险")
+    if not any(term in context for term in policy_terms):
+        missing.append("涉及的保单或保险产品")
+
+    incident_terms = (
+        "住院", "门诊", "疾病", "诊断", "手术", "事故", "出险", "受伤", "车祸", "治疗", "报案", "日期", "时间"
+    )
+    if not any(term in context for term in incident_terms):
+        missing.append("出险或就诊经过及时间")
+
+    if not missing:
+        return None
+
+    return {
+        "type": "requirement_confirmation",
+        "title": "确认理赔信息",
+        "question": "为了继续判断，请补充：" + "、".join(missing) + "。",
+        "assumptions": [],
+        "options": [],
+    }
+
+
+def requirement_confirmation_node(state: InsuranceAgentState):
+    """Pause before claim/recommendation agents when material details are missing."""
+
+    workflow = state.get("active_workflow")
+    messages = state.get("messages", [])
+    context = _confirmation_context(messages)
+    latest_request = next(
+        (message.text for message in reversed(messages) if isinstance(message, HumanMessage)),
+        "",
+    )
+    if workflow == "recommendation_plan":
+        confirmation = _recommendation_confirmation(context, latest_request)
+    elif workflow == "claim":
+        confirmation = _claim_confirmation(context, latest_request)
+    else:
+        confirmation = None
+
+    if confirmation is None:
+        return Command(goto=workflow)
+
+    answer = interrupt(confirmation)
+    if isinstance(answer, dict):
+        answer_text = str(answer.get("answer", ""))
+    else:
+        answer_text = str(answer)
+    return Command(
+        update={
+            "messages": [
+                AIMessage(content=confirmation["question"]),
+                HumanMessage(content=answer_text),
+            ]
+        },
+        goto=workflow,
+    )
 
 # 1.2.保险方案推荐咨询节点
 # def recommendation_node(state: InsuranceAgentState):
@@ -129,6 +271,7 @@ async def init_insurance_agent(checkpointer):
         create_parent_context_compression_node(context_model),
     )
     builder.add_node("route", route_node)
+    builder.add_node("requirement_confirmation", requirement_confirmation_node)
     builder.add_node("recommendation_plan",await init_insurance_advisor())
     builder.add_node("chitchat", init_chitchat_agent())
     builder.add_node("claim", await init_claim_advisor())

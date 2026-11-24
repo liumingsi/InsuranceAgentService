@@ -1,10 +1,12 @@
 from langchain.agents import create_agent
+from langchain.agents.middleware import TodoListMiddleware
 from langchain.chat_models import init_chat_model
 from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from .context_compression import create_agent_summarization_middleware
+from .requirement_confirmation import create_requirement_confirmation_middleware
 from .tools import query_candidate_products, retrieve_insurance_clause
 
 logger = get_logger(__name__)
@@ -31,7 +33,13 @@ async def init_insurance_advisor() -> CompiledStateGraph:
         model=model,
         tools=[query_candidate_products, retrieve_insurance_clause],
         system_prompt=SYSTEM_PROMPT,
-        middleware=[create_agent_summarization_middleware(model)],
+        middleware=[
+            TodoListMiddleware(),
+            create_requirement_confirmation_middleware(
+                "保险推荐中，若被保险人年龄/身份、保障目标、预算、保障期限等信息会实质影响候选方案而尚未明确，先询问最关键的缺项。用户询问保险知识或产品条款时，不要为了推荐而追问这些信息。"
+            ),
+            create_agent_summarization_middleware(model),
+        ],
     )
 
     logger.info("保险顾问Agent初始化完毕~✅️")

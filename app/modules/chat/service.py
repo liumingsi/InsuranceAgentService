@@ -1,12 +1,34 @@
+import json
+
+from fastapi import HTTPException
 from fastapi.sse import ServerSentEvent
 from langchain.messages import HumanMessage
-from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chat_thread.repository import ChatThreadRepository
 from app.modules.chat_thread.exceptions import ChatThreadNotFound
 from .schema import ChatRequest
+
+
+def _interrupt_payload(pending_interrupt) -> tuple[str, dict]:
+    if isinstance(pending_interrupt, dict):
+        value = pending_interrupt.get("value", pending_interrupt)
+        interrupt_id = pending_interrupt.get("id") or pending_interrupt.get("interrupt_id")
+    else:
+        value = getattr(pending_interrupt, "value", pending_interrupt)
+        interrupt_id = getattr(pending_interrupt, "id", None)
+
+    if isinstance(value, dict):
+        payload = dict(value)
+    else:
+        payload = {"type": "requirement_confirmation", "question": str(value)}
+    if interrupt_id is not None:
+        payload["interrupt_id"] = interrupt_id
+
+    dedupe_key = str(interrupt_id) if interrupt_id is not None else json.dumps(payload, ensure_ascii=False)
+    return dedupe_key, payload
 
 
 class ChatService:
@@ -24,11 +46,17 @@ class ChatService:
             # 指定会话不属于当前用户
             raise ChatThreadNotFound()
 
-        # 2.组织消息
-        _input = {"messages": [HumanMessage(request.message)]}
-
-        # 3.组织config，实现会话记忆
+        # 2.组织config，实现会话记忆
         config = {"configurable": {"thread_id": request.thread_id}}
+
+        # 3.普通消息启动新一轮；人工确认回复则恢复暂停的图执行。
+        if request.resume:
+            snapshot = await self.agent.aget_state(config)
+            if not snapshot.interrupts:
+                raise HTTPException(status_code=409, detail="当前会话没有等待确认的中断")
+            _input = Command(resume=request.message)
+        else:
+            _input = {"messages": [HumanMessage(request.message)]}
 
         # 4.调用Agent
         stream = await self.agent.astream_events(
@@ -50,7 +78,19 @@ class ChatService:
         #
         # yield ServerSentEvent(data="END", event="done")
 
+        seen_interrupts = set()
         async for event in stream:
+            params = event.get("params", {})
+            for pending_interrupt in params.get("interrupts", ()):
+                dedupe_key, payload = _interrupt_payload(pending_interrupt)
+                if dedupe_key in seen_interrupts:
+                    continue
+                seen_interrupts.add(dedupe_key)
+                yield ServerSentEvent(
+                    data=json.dumps(payload, ensure_ascii=False),
+                    event="interrupt",
+                )
+
             if event.get('method') != 'messages':
                 continue
 
@@ -99,5 +139,17 @@ class ChatService:
 
             for url in image_urls:
                 yield ServerSentEvent(data=url, event="image")
+
+        # LangGraph v3 exposes pending interrupts through the run's interrupt
+        # projection. This also catches root-level interrupts not seen above.
+        for pending_interrupt in await stream.interrupts():
+            dedupe_key, payload = _interrupt_payload(pending_interrupt)
+            if dedupe_key in seen_interrupts:
+                continue
+            seen_interrupts.add(dedupe_key)
+            yield ServerSentEvent(
+                data=json.dumps(payload, ensure_ascii=False),
+                event="interrupt",
+            )
 
         yield ServerSentEvent(data="END", event="done")
