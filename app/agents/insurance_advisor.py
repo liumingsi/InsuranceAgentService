@@ -4,6 +4,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from .context_compression import create_agent_summarization_middleware
 from .tools import query_candidate_products, retrieve_insurance_clause
 
 logger = get_logger(__name__)
@@ -29,7 +30,8 @@ async def init_insurance_advisor() -> CompiledStateGraph:
     agent = create_agent(
         model=model,
         tools=[query_candidate_products, retrieve_insurance_clause],
-        system_prompt=SYSTEM_PROMPT
+        system_prompt=SYSTEM_PROMPT,
+        middleware=[create_agent_summarization_middleware(model)],
     )
 
     logger.info("保险顾问Agent初始化完毕~✅️")

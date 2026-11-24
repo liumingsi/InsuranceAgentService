@@ -2,13 +2,16 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
 from langgraph.types import Command
+from langchain.chat_models import init_chat_model
 
 from .claim import init_claim_advisor
 from .schemas import InsuranceAgentState, Intent
 from .intent_router import router
 from .chitchat import init_chitchat_agent
+from .context_compression import create_parent_context_compression_node
 from .insurance_advisor import init_insurance_advisor
 from .safety_guardrail import init_safety_guardrail
+from app.core.config import settings
 # 1.定义节点
 
 # 1.1.意图识别节点
@@ -114,7 +117,17 @@ async def init_insurance_agent(checkpointer):
     # 建造器
     builder = StateGraph(InsuranceAgentState)
 
+    context_model = init_chat_model(
+        model=settings.llm.chat_model,
+        api_key=settings.llm.api_key,
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+
     # 添加节点
+    builder.add_node(
+        "context_compression",
+        create_parent_context_compression_node(context_model),
+    )
     builder.add_node("route", route_node)
     builder.add_node("recommendation_plan",await init_insurance_advisor())
     builder.add_node("chitchat", init_chitchat_agent())
@@ -124,7 +137,8 @@ async def init_insurance_agent(checkpointer):
     builder.add_node("safety_guardrail", await init_safety_guardrail())
 
     # 添加Edge，连Node
-    builder.add_edge(START, "safety_guardrail")  # 添加数据清洗节点
+    builder.add_edge(START, "context_compression")
+    builder.add_edge("context_compression", "safety_guardrail")
     builder.add_conditional_edges(  # 添加条件边
         "safety_guardrail",
         route_after_guardrail,

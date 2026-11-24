@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from .context_compression import compact_messages
 from .schemas import InsuranceAgentState
 
 logger = get_logger(__name__)
@@ -34,7 +35,7 @@ class ChitChatWorkflow:
         )
 
 
-    def chitchat(self, state: InsuranceAgentState):
+    async def chitchat(self, state: InsuranceAgentState):
 
         # 取出State中的闲聊次数
         count = state.get("chitchat_count", 0)
@@ -50,7 +51,10 @@ class ChitChatWorkflow:
 
         logger.info(f"当前闲聊次：{count}")
         # 没超过闲聊最大轮次，可以正常对话
-        response = self.model.invoke([SystemMessage(SYSTEM_MESSAGE)] + state['messages'])
+        messages = await compact_messages(self.model, state.get("messages", []))
+        if messages is None:
+            messages = state["messages"]
+        response = await self.model.ainvoke([SystemMessage(SYSTEM_MESSAGE)] + messages)
 
         # 返回结果，更新Message、更新count
         return {

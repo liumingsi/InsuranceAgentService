@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 from app.agents.schemas import GuardrailResult
 from app.core.config import settings
 from app.core.logging import get_logger
+from .context_compression import create_agent_summarization_middleware
 
 logger = get_logger(__name__)
 
@@ -29,6 +30,7 @@ async def init_safety_guardrail() -> CompiledStateGraph:
     agent = create_agent(
         model=model,
         middleware=[
+            create_agent_summarization_middleware(model),
             # 用户输入中的邮箱，直接打码替换
             PIIMiddleware("email", strategy="redact", apply_to_input=True),
 
