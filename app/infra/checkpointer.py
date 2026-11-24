@@ -12,6 +12,7 @@ checkpoint_pool = AsyncConnectionPool(
     conninfo=settings.db.checkpoint_url,
     min_size=1,  # 池最小连接数
     max_size=5,  # 池最大连接数
+    max_idle=300.0,  # 空闲连接在池中保留的最长秒数，超时会被回收
     kwargs={
         "autocommit": True,  # 自动提交事务
         "prepare_threshold": 0,  # 不做预准备sql

@@ -15,11 +15,11 @@ logger = get_logger(__name__)
 
 # Keep a reserve for system prompts, tool schemas, and messages produced during
 # an agent's tool loop. Tune these against the configured model's context size.
-PARENT_CONTEXT_TRIGGER_TOKENS = 8_000
-PARENT_CONTEXT_KEEP_TOKENS = 3_000
-AGENT_CONTEXT_TRIGGER_TOKENS = 12_000
-AGENT_CONTEXT_KEEP_TOKENS = 4_000
-SUMMARY_INPUT_MAX_TOKENS = 5_000
+PARENT_CONTEXT_TRIGGER_TOKENS = 400_000
+PARENT_CONTEXT_KEEP_TOKENS = 40_000
+AGENT_CONTEXT_TRIGGER_TOKENS = 450_000
+AGENT_CONTEXT_KEEP_TOKENS = 50_000
+SUMMARY_INPUT_MAX_TOKENS = 20_000
 
 SUMMARY_PROMPT = """
 你负责压缩客服对话历史，不回答用户问题。
