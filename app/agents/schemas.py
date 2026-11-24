@@ -11,7 +11,14 @@ Intent = Literal[
     "human_handoff",
     "fallback",
 ]
-
+class GuardrailResult(BaseModel):
+    """安全校验的结构化输出"""
+    safe: bool = Field(description="输入是否安全；无 SQL 注入 / XSS / PII 泄漏时为 true")
+    reason: str = Field(default="", description="不安全时的原因说明")
+    category: Literal["none", "sql_injection", "xss", "pii", "other"] = Field(
+        default="none", description="风险类别"
+    )
+    sanitized_input: str = Field(default="", description="清洗/脱敏后的输入")
 
 class RouteResult(BaseModel):
     """意图识别结果"""
@@ -25,3 +32,5 @@ class InsuranceAgentState(MessagesState):
 
     previous_workflow: Intent
     active_workflow: Intent
+    chitchat_count: int
+    structured_response: GuardrailResult | None = None

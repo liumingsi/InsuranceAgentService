@@ -20,11 +20,6 @@ SYSTEM_MESSAGE = """
 5. 超出能力范围时，如实说明无法提供。
 """.strip()
 
-
-# 1.定义State
-class ChitchatState(InsuranceAgentState):
-    chitchat_count: int     # 统计闲聊次数
-
 # 2.定义Workflow
 
 MAX_COUNT = 2   # 最大闲聊轮次
@@ -39,7 +34,7 @@ class ChitChatWorkflow:
         )
 
 
-    def chitchat(self, state: ChitchatState):
+    def chitchat(self, state: InsuranceAgentState):
 
         # 取出State中的闲聊次数
         count = state.get("chitchat_count", 0)
@@ -66,7 +61,7 @@ class ChitChatWorkflow:
     def build_chitchat_graph(self):
 
         # 创建Builder
-        builder = StateGraph(ChitchatState)
+        builder = StateGraph(InsuranceAgentState)
 
         # 添加节点
         builder.add_node("chitchat", self.chitchat)

@@ -8,7 +8,7 @@ from .schemas import InsuranceAgentState, Intent
 from .intent_router import router
 from .chitchat import init_chitchat_agent
 from .insurance_advisor import init_insurance_advisor
-
+from .safety_guardrail import init_safety_guardrail
 # 1.定义节点
 
 # 1.1.意图识别节点
@@ -96,7 +96,19 @@ def human_handoff_node(state: InsuranceAgentState):
 # 1.6.fallback
 def fallback_node(state: InsuranceAgentState):
     return {"messages": [AIMessage("无法识别您的意图，请再说一遍~~")]}
+# 判断数据是否安全
+def route_after_guardrail(state: InsuranceAgentState) -> str:
+    sr = state.get("structured_response")
+    if sr is None:
+        return "blocked"                # fail-closed，宁可拦错也不放行
 
+    # 兼容 Pydantic 对象和 dict 两种形态
+    if isinstance(sr, dict):
+        safe = bool(sr.get("safe", False))
+    else:
+        safe = bool(getattr(sr, "safe", False))
+
+    return "pass" if safe else "blocked"
 # 2.创建Graph，用Edge连接Node
 async def init_insurance_agent(checkpointer):
     # 建造器
@@ -109,9 +121,18 @@ async def init_insurance_agent(checkpointer):
     builder.add_node("claim", await init_claim_advisor())
     builder.add_node("human_handoff", human_handoff_node)
     builder.add_node("fallback", fallback_node)
+    builder.add_node("safety_guardrail", await init_safety_guardrail())
 
     # 添加Edge，连Node
-    builder.add_edge(START, "route")
+    builder.add_edge(START, "safety_guardrail")  # 添加数据清洗节点
+    builder.add_conditional_edges(  # 添加条件边
+        "safety_guardrail",
+        route_after_guardrail,
+        {
+            "pass": "route",
+            "blocked": "fallback",
+        },
+    )
     builder.add_edge("recommendation_plan", END)
     builder.add_edge("claim", END)
     builder.add_edge("human_handoff", END)
