@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from langchain.tools import tool
@@ -6,7 +7,6 @@ from fastapi.encoders import jsonable_encoder
 from app.infra.database import AsyncSessionFactory
 from app.modules.product.models import Product
 from app.modules.product.service import ProductService
-from app.rag.models import ParentChunk
 
 
 @tool
@@ -42,7 +42,7 @@ async def retrieve_insurance_clause(
     k: int,
     product_id: int
 ):
-    """查询指定保险产品的条款内容。
+    """查询指定保险产品的条款原文及可追溯来源。
 
     Args:
         query: 需要从保险条款中查询的问题。
@@ -54,12 +54,6 @@ async def retrieve_insurance_clause(
     from app.rag import retriever
 
     # 2.检索
-    chunks: list[ParentChunk] = await retriever.retrieve(query, k, product_id)
-
-    # 3.把查询到的ParentChunk变成字符串
-    results = [
-        f"section_path: {chunk.section_path}\n content:{chunk.content}"
-        for chunk in chunks
-    ]
-
-    return results
+    # Return compact, ID-addressable source data for both the model and UI.
+    sources = await retriever.retrieve(query, k, product_id)
+    return json.dumps(sources, ensure_ascii=False)

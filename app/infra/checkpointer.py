@@ -10,21 +10,20 @@ logger = get_logger(__name__)
 # 1.创建checkpointer专用连接池
 checkpoint_pool = AsyncConnectionPool(
     conninfo=settings.db.checkpoint_url,
-    min_size=1,
-    max_size=5,
-    max_idle=300.0,
-    timeout=30.0,                                   # 取连接超时
-    check=AsyncConnectionPool.check_connection,     # 取连接前健康检查 ★关键
+    min_size=1,  # 池最小连接数
+    max_size=5,  # 池最大连接数
+    timeout=30.0,  # 等待可用checkpoint连接的最长时间
+    check=AsyncConnectionPool.check_connection,  # 借出前探测连接，丢弃失效连接并重连
     kwargs={
-        "autocommit": True,
-        "prepare_threshold": None,                  # 真正禁用预准备（原 0 是反的）
-        "row_factory": dict_row,
-        "keepalives": 1,                            # TCP 保活 ★关键
+        "autocommit": True,  # 自动提交事务
+        "prepare_threshold": 0,  # 做预准备sql
+        "row_factory": dict_row,  # 查询结果以dict返回
+        "keepalives": 1,  # 避免长时间空闲连接被网络设备静默清理
         "keepalives_idle": 60,
         "keepalives_interval": 10,
         "keepalives_count": 5,
     },
-    open=False,
+    open=False,  # 不自动创建连接
 )
 
 # 2.初始化连接

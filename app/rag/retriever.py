@@ -26,6 +26,9 @@ class ParentChunkRetriever:
         self._vector_store = vector_store
 
     async def retrieve(self, query: str, k: int, product_id: int):
+        # Keep the tool context and source card list compact.
+        k = min(max(k, 1), 4)
+
         # 1.混合检索，召回子块 list[Document]
         child_chunks = await self._vector_store.asimilarity_search(
             query,
@@ -64,6 +67,39 @@ class ParentChunkRetriever:
             for id in parent_ids
         ]
 
-        return parent_chunks
+        # Return the matching child excerpt with its parent citation metadata.
+        # The parent may contain an entire long section; the child is the short
+        # passage that actually matched the query.
+        child_by_parent_id = {}
+        for child in child_chunks:
+            parent_id = child.metadata.get("parent_id")
+            if parent_id is not None:
+                child_by_parent_id.setdefault(str(parent_id), child)
+
+        results = []
+        for parent in parent_chunks:
+            if parent is None:
+                continue
+
+            section_path = parent.section_path or []
+            child = child_by_parent_id.get(str(parent.id))
+            excerpt = child.page_content if child is not None else parent.content
+
+            # Child chunks include the section heading for retrieval context.
+            # Keep the heading as metadata and return only the source passage.
+            section_header = "\n".join(section_path)
+            if section_header and excerpt.startswith(section_header):
+                excerpt = excerpt[len(section_header):].lstrip("\n")
+
+            results.append(
+                {
+                    "citation_id": f"S{len(results) + 1}",
+                    "clause_name": parent.clause_name,
+                    "section_path": section_path,
+                    "source_excerpt": excerpt,
+                }
+            )
+
+        return results
 
 

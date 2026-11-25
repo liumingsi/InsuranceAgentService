@@ -12,6 +12,82 @@ from app.modules.chat_thread.exceptions import ChatThreadNotFound
 from .schema import ChatRequest
 
 
+SOURCE_TOOL_NAME = "retrieve_insurance_clause"
+MAX_SOURCE_CARDS = 4
+MAX_SOURCE_EXCERPT_LENGTH = 160
+
+
+def _field(value, name: str, default=None):
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _tool_result_sources(messages: list) -> list[dict]:
+    """Extract this turn's compact source cards from the agent tool messages."""
+    last_user_message = -1
+    for index, message in enumerate(messages):
+        if _field(message, "type") in ("human", "user"):
+            last_user_message = index
+
+    sources_by_id = {}
+    for message in messages[last_user_message + 1:]:
+        if _field(message, "type") != "tool" or _field(message, "name") != SOURCE_TOOL_NAME:
+            continue
+
+        content = _field(message, "content")
+        if isinstance(content, list):
+            content = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+        if not isinstance(content, str):
+            continue
+
+        try:
+            tool_sources = json.loads(content)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(tool_sources, dict):
+            tool_sources = tool_sources.get("sources", [])
+        if not isinstance(tool_sources, list):
+            continue
+
+        for source in tool_sources:
+            if not isinstance(source, dict):
+                continue
+
+            citation_id = source.get("citation_id")
+            title = source.get("clause_name")
+            excerpt = source.get("source_excerpt")
+            if not citation_id or not title or not excerpt:
+                continue
+
+            section_path = source.get("section_path") or []
+            if isinstance(section_path, str):
+                section = section_path
+            else:
+                section = " > ".join(str(part) for part in section_path if part)
+
+            excerpt = " ".join(str(excerpt).split())
+            if len(excerpt) > MAX_SOURCE_EXCERPT_LENGTH:
+                excerpt = excerpt[:MAX_SOURCE_EXCERPT_LENGTH].rstrip() + "…"
+
+            sources_by_id.setdefault(
+                str(citation_id),
+                {
+                    "id": str(citation_id),
+                    "title": str(title),
+                    "section": section,
+                    "excerpt": excerpt,
+                },
+            )
+            if len(sources_by_id) >= MAX_SOURCE_CARDS:
+                break
+
+    return list(sources_by_id.values())
+
+
 def _interrupt_payload(pending_interrupt) -> tuple[str, dict]:
     if isinstance(pending_interrupt, dict):
         value = pending_interrupt.get("value", pending_interrupt)
@@ -79,8 +155,17 @@ class ChatService:
         # yield ServerSentEvent(data="END", event="done")
 
         seen_interrupts = set()
+        latest_messages = []
         async for event in stream:
             params = event.get("params", {})
+
+            # v3 values events contain graph state, including ToolMessages
+            # returned by retrieve_insurance_clause.
+            if event.get("method") == "values":
+                state = params.get("data")
+                if isinstance(state, dict) and isinstance(state.get("messages"), list):
+                    latest_messages = state["messages"]
+
             for pending_interrupt in params.get("interrupts", ()):
                 dedupe_key, payload = _interrupt_payload(pending_interrupt)
                 if dedupe_key in seen_interrupts:
@@ -150,6 +235,24 @@ class ChatService:
             yield ServerSentEvent(
                 data=json.dumps(payload, ensure_ascii=False),
                 event="interrupt",
+            )
+
+        final_state = await stream.output()
+        if isinstance(final_state, dict) and isinstance(final_state.get("messages"), list):
+            latest_messages = final_state["messages"]
+
+        source_cards = _tool_result_sources(latest_messages)
+        if source_cards:
+            yield ServerSentEvent(
+                data=json.dumps(
+                    {
+                        "title": "引用来源",
+                        "count": len(source_cards),
+                        "sources": source_cards,
+                    },
+                    ensure_ascii=False,
+                ),
+                event="sources",
             )
 
         yield ServerSentEvent(data="END", event="done")
