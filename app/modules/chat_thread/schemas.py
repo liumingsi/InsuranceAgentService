@@ -25,11 +25,21 @@ class ChatThreadResponse(BaseModel):
 from typing import Literal
 
 
+class ChatSourceReference(BaseModel):
+    """引用来源卡片数据"""
+
+    id: str
+    title: str
+    section: str = ""
+    excerpt: str
+
+
 class ChatMessageResponse(BaseModel):
     """历史消息"""
 
     role: Literal["user", "assistant"]
     content: str
+    sources: list[ChatSourceReference] = Field(default_factory=list)
 
 
 class ChatHistoryResponse(BaseModel):

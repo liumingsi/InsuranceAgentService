@@ -10,82 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.chat_thread.repository import ChatThreadRepository
 from app.modules.chat_thread.exceptions import ChatThreadNotFound
 from .schema import ChatRequest
-
-
-SOURCE_TOOL_NAME = "retrieve_insurance_clause"
-MAX_SOURCE_CARDS = 4
-MAX_SOURCE_EXCERPT_LENGTH = 160
-
-
-def _field(value, name: str, default=None):
-    if isinstance(value, dict):
-        return value.get(name, default)
-    return getattr(value, name, default)
-
-
-def _tool_result_sources(messages: list) -> list[dict]:
-    """Extract this turn's compact source cards from the agent tool messages."""
-    last_user_message = -1
-    for index, message in enumerate(messages):
-        if _field(message, "type") in ("human", "user"):
-            last_user_message = index
-
-    sources_by_id = {}
-    for message in messages[last_user_message + 1:]:
-        if _field(message, "type") != "tool" or _field(message, "name") != SOURCE_TOOL_NAME:
-            continue
-
-        content = _field(message, "content")
-        if isinstance(content, list):
-            content = "".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
-        if not isinstance(content, str):
-            continue
-
-        try:
-            tool_sources = json.loads(content)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(tool_sources, dict):
-            tool_sources = tool_sources.get("sources", [])
-        if not isinstance(tool_sources, list):
-            continue
-
-        for source in tool_sources:
-            if not isinstance(source, dict):
-                continue
-
-            citation_id = source.get("citation_id")
-            title = source.get("clause_name")
-            excerpt = source.get("source_excerpt")
-            if not citation_id or not title or not excerpt:
-                continue
-
-            section_path = source.get("section_path") or []
-            if isinstance(section_path, str):
-                section = section_path
-            else:
-                section = " > ".join(str(part) for part in section_path if part)
-
-            excerpt = " ".join(str(excerpt).split())
-            if len(excerpt) > MAX_SOURCE_EXCERPT_LENGTH:
-                excerpt = excerpt[:MAX_SOURCE_EXCERPT_LENGTH].rstrip() + "…"
-
-            sources_by_id.setdefault(
-                str(citation_id),
-                {
-                    "id": str(citation_id),
-                    "title": str(title),
-                    "section": section,
-                    "excerpt": excerpt,
-                },
-            )
-            if len(sources_by_id) >= MAX_SOURCE_CARDS:
-                break
-
-    return list(sources_by_id.values())
+from .sources import source_cards_for_latest_turn
 
 
 def _interrupt_payload(pending_interrupt) -> tuple[str, dict]:
@@ -241,7 +166,7 @@ class ChatService:
         if isinstance(final_state, dict) and isinstance(final_state.get("messages"), list):
             latest_messages = final_state["messages"]
 
-        source_cards = _tool_result_sources(latest_messages)
+        source_cards = source_cards_for_latest_turn(latest_messages)
         if source_cards:
             yield ServerSentEvent(
                 data=json.dumps(

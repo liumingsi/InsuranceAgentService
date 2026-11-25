@@ -8,6 +8,7 @@ from .exceptions import ChatThreadNotFound
 from .repository import ChatThreadRepository
 from .models import ChatThread
 from .schemas import ChatHistoryResponse, ChatMessageResponse
+from app.modules.chat.sources import source_cards_from_tool_message
 
 class ChatThreadService:
 
@@ -67,17 +68,37 @@ class ChatThreadService:
 
         # 3.封装历史消息
         messages = []
+        pending_sources = []
         for message in state_snapshot.values.get('messages', []):
-            # 判断类型，决定role
             if isinstance(message, HumanMessage):
-                role = "user"
-            elif isinstance(message, AIMessage):
-                role = "assistant"
-            else:
+                pending_sources = []
+                if message.text:
+                    messages.append(ChatMessageResponse(role="user", content=message.text))
+                continue
+
+            if getattr(message, "type", None) == "tool":
+                cards = source_cards_from_tool_message(message)
+                existing_ids = {source["id"] for source in pending_sources}
+                pending_sources.extend(card for card in cards if card["id"] not in existing_ids)
+                pending_sources = pending_sources[:4]
+                continue
+
+            # AI tool-call messages have no user-facing content. Preserve source
+            # cards until the final assistant response for this turn.
+            if not isinstance(message, AIMessage):
                 continue
 
             if message.text:
-                messages.append(ChatMessageResponse(role=role, content=message.text))
+                has_more_tool_calls = bool(getattr(message, "tool_calls", []))
+                messages.append(
+                    ChatMessageResponse(
+                        role="assistant",
+                        content=message.text,
+                        sources=[] if has_more_tool_calls else pending_sources,
+                    )
+                )
+                if not has_more_tool_calls:
+                    pending_sources = []
 
 
         return ChatHistoryResponse(
