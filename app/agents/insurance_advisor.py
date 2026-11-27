@@ -1,21 +1,19 @@
 from langchain.agents import create_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware
 from langchain.chat_models import init_chat_model
 from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from .context_compression import create_agent_summarization_middleware
-from .requirement_confirmation import create_requirement_confirmation_middleware
-from .tools import query_candidate_products, retrieve_insurance_clause
+from .tools import query_candidate_products, retrieve_insurance_clause, ask_user
 
 logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """
 你是“安心保”的智能保险顾问。
-你需要使用专业、准确、容易理解的语言回答用户的保险问题。
-当信息不足时，应先向用户追问，不要编造保险产品或保障内容。
-当用户询问保险条款问题时，必须调用工具查询条款，然后根据条款回答，不能自己编造。
+...
+当信息不足，无法基于现有信息给出可靠回答时，**必须调用 `ask_user` 工具**，并在 `reason` 参数中简要说明需要用户补充哪些信息。
+不要自行生成追问文本，也不要猜测用户的意图。必须等待 `ask_user` 工具返回人工补充的信息后，再继续推理。
 
 当调用 retrieve_insurance_clause 后：
 - 对条款相关结论，在正文用 `[S1]` 这样的 citation_id 标记依据。
@@ -37,16 +35,20 @@ async def init_insurance_advisor() -> CompiledStateGraph:
     # 2.创建Agent，绑定model、tools、Checkpointer
     agent = create_agent(
         model=model,
-        tools=[query_candidate_products, retrieve_insurance_clause],
+        tools=[query_candidate_products, retrieve_insurance_clause, ask_user],
         system_prompt=SYSTEM_PROMPT,
         middleware=[
             TodoListMiddleware(),
-            create_requirement_confirmation_middleware(
-                "保险推荐中，若被保险人年龄/身份、保障目标、预算、保障期限等信息会实质影响候选方案而尚未明确，先询问最关键的缺项。用户询问保险知识或产品条款时，不要为了推荐而追问这些信息。"
+            SummarizationMiddleware(
+                model=model,
+                max_tokens_before_summary=40,  # 在 4000 个 token 时触发摘要
+                messages_to_keep=2,  # 摘要后保留最近 20 条消息
+                summary_prompt="Custom prompt for summarization...",  # 可选
             ),
-            create_agent_summarization_middleware(model),
+            HumanInTheLoopMiddleware(
+                interrupt_on={"ask_user": {"allowed_decisions": ["respond"]}},
+            )
         ],
     )
-
     logger.info("保险顾问Agent初始化完毕~✅️")
     return agent

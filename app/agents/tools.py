@@ -57,3 +57,8 @@ async def retrieve_insurance_clause(
     # Return compact, ID-addressable source data for both the model and UI.
     sources = await retriever.retrieve(query, k, product_id)
     return json.dumps(sources, ensure_ascii=False)
+
+@tool
+def ask_user(stage: str, reason: str) -> str:
+    """向人类求助。stage 用于标识当前所处的信息收集阶段。"""
+    return ""  # 不会执行，由中间件中断

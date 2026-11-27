@@ -77,5 +77,5 @@ class ChitChatWorkflow:
         # 编译
         return builder.compile()
 
-def init_chitchat_agent():
+async def init_chitchat_agent():
     return ChitChatWorkflow().build_chitchat_graph()
